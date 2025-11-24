@@ -1,17 +1,13 @@
 // api/instagram.js
 
 export default async function handler(req, res) {
-  // CORS – telefondan / başka domainlerden çağırırken sorun çıkmasın diye
+  // Basit CORS – telefondan çağırırken sorun olmasın
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
   if (req.method === "OPTIONS") {
     return res.status(200).end();
-  }
-
-  if (req.method !== "GET") {
-    return res.status(405).json({ error: "Sadece GET istekleri destekleniyor." });
   }
 
   const { username } = req.query;
@@ -23,18 +19,20 @@ export default async function handler(req, res) {
   }
 
   const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
-  const RAPIDAPI_HOST = "instagram-api-fast-reliable-data-scraper.p.rapidapi.com";
+  const RAPIDAPI_HOST =
+    "instagram-api-fast-reliable-data-scraper.p.rapidapi.com";
+  const BASE_URL = `https://${RAPIDAPI_HOST}`;
 
   if (!RAPIDAPI_KEY) {
     return res
       .status(500)
-      .json({ error: "Sunucuda RAPIDAPI_KEY tanımlı değil. Vercel Environment Variables kontrol et." });
+      .json({ error: "Sunucuda RAPIDAPI_KEY tanımlı değil." });
   }
 
   try {
     // 1) username -> user_id
     const userIdRes = await fetch(
-      `https://${RAPIDAPI_HOST}/user_id_by_username?username=${encodeURIComponent(
+      `${BASE_URL}/user_id_by_username?username=${encodeURIComponent(
         username
       )}`,
       {
@@ -56,12 +54,11 @@ export default async function handler(req, res) {
 
     const userId = userIdData.UserID;
 
-    // 2) user_id -> post feed (son 12 post)
-    // RapidAPI playground’da gördüğün endpoint: /user_post_feed?user_id=...
+    // 2) user_id -> post feed (son postlar)
+    // RapidAPI’de "User Post Feed" endpoint’inin URL’ini birebir kullanıyoruz:
+    // /user_post_feed?user_id=...
     const postsRes = await fetch(
-      `https://${RAPIDAPI_HOST}/user_post_feed?user_id=${encodeURIComponent(
-        userId
-      )}`,
+      `${BASE_URL}/user_post_feed?user_id=${encodeURIComponent(userId)}`,
       {
         method: "GET",
         headers: {
@@ -73,22 +70,50 @@ export default async function handler(req, res) {
 
     const postsData = await postsRes.json();
 
-    if (!postsRes.ok || !postsData.items) {
-      return res
-        .status(500)
-        .json({ error: "Postlar çekilemedi", raw: postsData });
+    if (!postsRes.ok || !Array.isArray(postsData.items)) {
+      return res.status(500).json({
+        error: "Postlar çekilemedi",
+        raw: postsData,
+      });
     }
 
-    // Basit format: her post için temel alanlar
-    const cleaned = postsData.items.map((media) => ({
-      media_id: media.id,
-      code: media.code,
-      taken_at: media.taken_at, // timestamp
-      caption: media.caption?.text || "",
-      like_count: media.like_count ?? null,
-      comment_count: media.comment_count ?? null,
-      media_type: media.media_type,
-      image_url: media.image_versions2?.candidates?.[0]?.url || null,
+    // Gönderdiğin JSON yapısına göre temiz çıktı
+    const cleaned = postsData.items.map((item) => ({
+      // id / pk
+      media_id: item.id ?? null,
+      pk: item.pk ?? null,
+
+      // temel bilgiler
+      code: item.code ?? null,
+      media_type: item.media_type ?? null, // 1: foto, 2: video/reels
+      taken_at: item.taken_at ?? null,
+
+      // caption
+      caption: item.caption?.text ?? "",
+
+      // sayılar
+      like_count: item.like_count ?? null,
+      comment_count: item.comment_count ?? null,
+
+      // görsel url (varsa)
+      image_url:
+        item.image_versions2?.candidates?.[0]?.url ??
+        item.additional_candidates?.first_frame?.url ??
+        null,
+
+      // video url (varsa)
+      video_url: item.video_versions?.[0]?.url ?? null,
+
+      // kullanıcı bilgisi (özet)
+      user: item.user
+        ? {
+            id: item.user.pk ?? null,
+            username: item.user.username ?? null,
+            full_name: item.user.full_name ?? null,
+            profile_pic_url: item.user.profile_pic_url ?? null,
+            is_verified: item.user.is_verified ?? null,
+          }
+        : null,
     }));
 
     return res.status(200).json({
@@ -98,9 +123,10 @@ export default async function handler(req, res) {
       posts: cleaned,
     });
   } catch (err) {
-    console.error("Instagram API hata:", err);
-    return res
-      .status(500)
-      .json({ error: "Bilinmeyen hata", detail: err.message });
+    console.error("API Hatası:", err);
+    return res.status(500).json({
+      error: "Bilinmeyen hata",
+      detail: err.message,
+    });
   }
 }
