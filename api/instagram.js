@@ -46,7 +46,7 @@ export default async function handler(req, res) {
 
     // 2) user_id -> post feed (son 12 post)
     const postsRes = await fetch(
-      `https://${RAPIDAPI_HOST}/user_post_feed?user_id=${userId}`,
+      `https://${RAPIDAPI_HOST}/user_post_feed_by_user_id?user_id=${userId}`,
       {
         method: "GET",
         headers: {
